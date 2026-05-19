@@ -1,0 +1,43 @@
+{
+  "name": "match-shapes",
+  "version": "0.1.0",
+  "description": "Generative SVG shape system for football match cards — palette-driven cells + GSAP reveal animations.",
+  "license": "MIT",
+  "author": "Itay Dreyfus",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/itaydre/match-shapes.git"
+  },
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18",
+    "gsap": ">=3.12"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "svg",
+    "generative",
+    "shapes",
+    "football",
+    "animation",
+    "gsap",
+    "react"
+  ]
+}
