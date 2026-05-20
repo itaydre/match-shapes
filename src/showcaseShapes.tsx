@@ -738,113 +738,75 @@ export const buildWarpedChecker: ShapeBuilder = (seed, size, palette) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// 9 — DIAGONAL TAPER
+// 9 — DIAGONAL TAPER (diagonal flare)
 //
-// Image 12: square grid of −45° chunks. A single corner is the
-// focal; chunks shrink along the perpendicular diagonal until they
-// dissolve to thin lines at the far corner. Structural taper — no
-// hard clip.
+// A flare bursting along the diagonal — streaks fan out in a cone
+// from an apex in the upper-left toward the lower-right. Each ray is
+// a chain of short slashes oriented along its own direction; slashes
+// grow longer and the field thins (more holes) toward the wide end,
+// so it reads as a flame / lens-flare cone rather than a solid wedge.
 // ─────────────────────────────────────────────────────────────────────
 export const buildDiagonalTaper: ShapeBuilder = (seed, size, palette) => {
   const rand = mulberry32(seed);
   const half = size / 2;
   const cells: Cell[] = [];
-  // FUNNEL — same -45° diagonal direction, same focal corner
-  // (bottom-left). Sharp-cornered chunks (no border-radius) laid
-  // out as a tapered cone: wide mouth at the top-right opening,
-  // narrowing to a point at the bottom-left spout. A small uniform
-  // gap separates every neighbour both along and across the funnel
-  // so the field reads as discrete pixel chunks rather than a
-  // continuous fill.
-  const fx = -half;
-  const fy = half;
-  // Diagonal axis: from focal (fx, fy) toward the opposite corner.
-  const aX = 1 / Math.SQRT2;   // +x
-  const aY = -1 / Math.SQRT2;  // -y
-  // Perpendicular to the axis (used to position chunks across the
-  // funnel width).
-  const pX = -aY;
-  const pY = aX;
-  // Sharp chunk dimensions — long thin rectangles oriented at -45°.
-  const chunkW = size * 0.075;
-  const chunkH = size * 0.018;
-  // A -45° chunk's axis-aligned footprint along either projection is
-  // (w + h) / √2. Pitch sits just above that so every neighbour has
-  // a small visible gap.
-  const footprint = (chunkW + chunkH) / Math.SQRT2;
-  const pitch = footprint + size * 0.022; // ~2.2% canvas gap between cells
-  // Funnel axial extent + axial step count derived from pitch so
-  // chunks tile with consistent spacing all the way from spout to
-  // mouth.
-  const totalLen = Math.hypot(size, size) * 0.95;
-  const STEPS = Math.floor(totalLen / pitch);
-  // Funnel half-width at the mouth.
-  const MOUTH_HALF_W = size * 0.42;
-  for (let s = 0; s < STEPS; s++) {
-    // t goes from 0 at the spout to 1 at the mouth.
-    const t = STEPS === 1 ? 0 : s / (STEPS - 1);
-    // Position along the diagonal axis (from focal).
-    const axialDist = pitch * s;
-    // Funnel half-width grows linearly with t.
-    const halfW = MOUTH_HALF_W * t;
-    // Perpendicular chunks per row — chosen from pitch so neighbours
-    // share the same small gap as the axial spacing. Min 1 at the
-    // spout (single chunk at the tip).
-    const count = halfW < pitch * 0.5 ? 1 : (2 * Math.floor(halfW / pitch) + 1);
-    for (let i = 0; i < count; i++) {
-      // u indexes from -(count-1)/2 to +(count-1)/2 so the row is
-      // perfectly centred on the diagonal axis.
-      const offsetIdx = i - (count - 1) / 2;
-      const perpDist = offsetIdx * pitch;
-      // Position in canvas coords.
-      const px = fx + aX * axialDist + pX * perpDist;
-      const py = fy + aY * axialDist + pY * perpDist;
-      // Skip cells that wander outside the canvas.
+
+  // Apex in the upper-left; the flare opens toward the lower-right.
+  const apex = { x: -half * 0.78, y: -half * 0.78 };
+  const RAYS = 30;
+  // Cone centred on the down-right diagonal (45° = π/4 in SVG coords),
+  // opening ±CONE_HALF.
+  const coneCenter = Math.PI / 4;
+  const CONE_HALF = 0.62; // ~36° each side
+  const STEPS = 12;
+  const apexGap = size * 0.04;
+  const maxReach = Math.hypot(size, size) * 0.98;
+
+  for (let ray = 0; ray < RAYS; ray++) {
+    const rt = RAYS === 1 ? 0.5 : ray / (RAYS - 1); // 0..1 across fan
+    // Slight per-ray angular jitter so the flare isn't a clean fan.
+    const a =
+      coneCenter + (rt - 0.5) * 2 * CONE_HALF + (rand() - 0.5) * 0.04;
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    // Per-ray reach flicker — some streaks shoot far, some stop short.
+    const reach = maxReach * (0.5 + rand() * 0.5);
+    const rotDeg = (a * 180) / Math.PI;
+    // Each ray cycles a single palette colour for a coherent streak.
+    const rayColor = palette[ray % palette.length] ?? lightestColor(palette);
+    for (let s = 0; s < STEPS; s++) {
+      const st = s / (STEPS - 1); // 0 at apex → 1 at tip
+      const dist = apexGap + (reach - apexGap) * st;
+      const px = apex.x + cos * dist;
+      const py = apex.y + sin * dist;
       if (
         px < -half * 1.05 || px > half * 1.05 ||
         py < -half * 1.05 || py > half * 1.05
       ) continue;
-      // Small random dropout for breathing room, lighter near
-      // mouth so the wide opening still reads as filled.
-      if (rand() < 0.12 * (1 - t)) continue;
-      const color = palette[(s + i) % palette.length] ?? "#FFFFFF";
+      // Holes increase toward the wide end so the flare dissolves
+      // outward instead of staying a solid cone.
+      if (rand() < 0.12 + st * 0.45) continue;
+      // Slashes lengthen toward the tip — the flare "stretches" out.
+      const slashLen = size * (0.018 + st * 0.05);
+      const slashThick = size * 0.013;
       cells.push({
         kind: "rect",
         cx: px,
         cy: py,
-        w: chunkW,
-        h: chunkH,
-        rx: 0, // sharp corners — no rounded shape
-        rotation: -45,
-        color,
-        // Push the chunks' reveal off slightly so the focal anchor
-        // (added below) lands first and reads as the funnel's origin.
-        revealOrder: Math.min(1, 0.08 + t * 0.92),
-        revealMode: "burst",
-        birthOrigin: { x: fx, y: fy },
+        w: slashLen,
+        h: slashThick,
+        rx: 0,
+        rotation: rotDeg, // aligned with the ray direction
+        color: rayColor,
+        // Reveal streams outward from the apex.
+        revealOrder: Math.min(1, 0.05 + st * 0.85),
+        revealMode: "grow",
+        birthOrigin: { x: apex.x, y: apex.y },
+        noSpin: true,
       });
     }
   }
-  // Focus-point anchor — a single bold accent at the focal corner
-  // (spout end) so the eye knows where the taper converges. Uses
-  // the brightest palette slot and fires at revealOrder 0 so it
-  // lands before any chunk paints.
-  const focusSize = size * 0.052;
-  cells.push({
-    kind: "rect",
-    cx: fx,
-    cy: fy,
-    w: focusSize,
-    h: focusSize,
-    rx: 0,
-    rotation: -45,
-    color: palette[0] ?? lightestColor(palette),
-    revealOrder: 0,
-    revealMode: "burst",
-    birthOrigin: { x: fx, y: fy },
-    noSpin: true,
-  });
-  return { cells, focal: { x: fx, y: fy } };
+  return { cells, focal: { x: apex.x, y: apex.y } };
 };
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2406,6 +2368,15 @@ export const buildVortexDiscSpinner: ShapeBuilder = (seed, size, palette) =>
     swirlTurns: 0.6,
     wrap: "scale(0.9 0.45)",
     spinDegPerSec: 18,
+    // Punch lots of scattered holes through the disc so it reads as a
+    // broken, fragmented spinner rather than a solid plate. Drops climb
+    // toward the rim. Deterministic noise from cell position.
+    dropMask: (cx, cy) => {
+      const n = Math.abs(Math.sin(cx * 12.9898 + cy * 78.233) * 43758.5453);
+      const noise = n - Math.floor(n);
+      const rNorm = Math.min(1, Math.hypot(cx, cy) / (size / 2));
+      return noise < 0.4 + rNorm * 0.35; // 40%→75% holes outward
+    },
   });
 
 // ─────────────────────────────────────────────────────────────────────
@@ -2721,39 +2692,33 @@ export const buildRippleArcs: ShapeBuilder = (seed, size, palette) => {
   ] as const;
   const corner = corners[cornerIdx]!;
   const half = size / 2;
-  const focal = { x: corner.x * half * 1.02, y: corner.y * half * 1.02 };
+  // Focal pulled INWARD from the corner so the arrow floats inside
+  // the canvas and its tip doesn't sit on an edge.
+  const focal = { x: corner.x * half * 0.62, y: corner.y * half * 0.62 };
 
   const COLS = 40;
   const ROWS = 40;
   const slotW = size / COLS;
   const slotH = size / ROWS;
-  // Wider rings so each visible band has clear breathing room
-  // between it and the next stripe.
-  const RING_WIDTH = size * 0.095;
-  // Stripe occupies enough of each ring (~42%) that, after grid
-  // quantisation, every band is at least one full cell thick — the
-  // arcs read as continuous curves instead of broken pixels.
+  const RING_WIDTH = size * 0.08;
   const STRIPE_FRAC = 0.42;
   const maxR = Math.hypot(size * 1.05, size * 1.05);
 
-  // Per-band palette pair so all team colours show across the three
-  // arcs — each band picks a main + stripe slot two steps apart in
-  // the palette, wrapping if necessary.
   const bandColors = (bandIdx: number) => ({
     main: palette[(bandIdx * 2) % palette.length] ?? "#FFFFFF",
     stripe: palette[(bandIdx * 2 + 1) % palette.length] ?? "#000000",
   });
 
-  // Clip the arcs to THREE concentric annular bands centred on the
-  // focal corner. Each band is a curved arc slice; the gaps between
-  // bands are negative space, so the silhouette reads as three
-  // discrete arcs nested around the focal instead of one big sector.
+  // Arrow / chevron of nested arcs: a NARROW angular wedge (so it
+  // reads as a pointed arrow rather than a wide fan) of three arc
+  // bands whose radii are capped well inside the canvas, so the
+  // arrow never reaches the edges.
   const ARC_MID = Math.atan2(-focal.y, -focal.x);
-  const ARC_HALF_SPREAD = (Math.PI / 180) * 55;
+  const ARC_HALF_SPREAD = (Math.PI / 180) * 26; // ~52° total — pointed
   const ARC_BANDS: Array<{ inner: number; outer: number }> = [
-    { inner: size * 0.30, outer: size * 0.55 },
-    { inner: size * 0.74, outer: size * 0.98 },
-    { inner: size * 1.16, outer: size * 1.42 },
+    { inner: size * 0.16, outer: size * 0.30 },
+    { inner: size * 0.42, outer: size * 0.56 },
+    { inner: size * 0.68, outer: size * 0.82 },
   ];
 
   const inArc = (px: number, py: number): boolean => {
@@ -3186,8 +3151,14 @@ export const ShapeRenderer: React.FC<{
       // place. Burst + grow erupt from focal toward (cx, cy).
       const travelFromX = mode === "fade" ? 0 : -dx;
       const travelFromY = mode === "fade" ? 0 : -dy;
+      // svgOrigin uses ABSOLUTE SVG user-space coords (not the
+      // element's bounding-box) so the scale pivot is exactly the
+      // cell's (cx, cy). This matters for cells whose drawn geometry
+      // isn't centred on (cx, cy) — e.g. THIN_SPOKES lines anchored
+      // at the hub (cx=cy=0): they now grow from the origin outward
+      // instead of from their bounding-box corner.
       gsap.set(revealEl, {
-        transformOrigin: `${cell.cx}px ${cell.cy}px`,
+        svgOrigin: `${cell.cx} ${cell.cy}`,
       });
       const tween = gsap.fromTo(
         revealEl,

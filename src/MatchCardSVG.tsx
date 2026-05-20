@@ -126,10 +126,11 @@ const stringSeed = (s: string): number => {
   return h;
 };
 
-// Build a 4-colour palette per goal: the scoring team's primary +
-// secondary + accent + white. Order picks a dominant ink first so
-// single-colour shapes (warp_grid, thin_spokes, etc.) get a strong
-// team-readable mass.
+// Build a palette per goal from ONLY the scoring team's actual flag
+// colours — primary + secondary + accent, deduplicated, dominant ink
+// first. No invented neutrals: white/black are added ONLY if they're
+// genuinely one of the team's flag colours (e.g. Japan's white field,
+// Germany's black band), never appended by default.
 const paletteForGoal = (
   team: StaticPreviewTeam,
 ): string[] => {
@@ -138,8 +139,6 @@ const paletteForGoal = (
   for (const c of [team.flagPrimary, team.flagSecondary, team.flagAccent]) {
     if (cols.indexOf(c) === -1) cols.push(c);
   }
-  if (cols.indexOf("#FFFFFF") === -1) cols.push("#FFFFFF");
-  if (cols.indexOf("#000000") === -1) cols.push("#000000");
   return cols;
 };
 
