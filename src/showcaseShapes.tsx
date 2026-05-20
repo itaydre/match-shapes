@@ -36,6 +36,49 @@ const mulberry32 = (seed: number) => {
   };
 };
 
+// Perceptual luminance from a hex string. Used to pick the darkest /
+// lightest colours in a team palette so shapes can choose contrast
+// colours without ever hardcoding pure black or white.
+const colorLuminance = (hex: string): number => {
+  const h = hex.replace("#", "");
+  const r = parseInt(h.slice(0, 2), 16) || 0;
+  const g = parseInt(h.slice(2, 4), 16) || 0;
+  const b = parseInt(h.slice(4, 6), 16) || 0;
+  return 0.299 * r + 0.587 * g + 0.114 * b;
+};
+
+// Pick the darkest colour available in the team palette. Replaces
+// the old `inkDark = "#0E0E0E"` constants so every shape's "ink"
+// stays within the flag palette — black only appears if it's
+// actually one of the team's flag colours.
+const darkestColor = (palette: string[]): string => {
+  let best = palette[0] ?? "#222222";
+  let bestLum = 999;
+  for (const hex of palette) {
+    const lum = colorLuminance(hex);
+    if (lum < bestLum) {
+      bestLum = lum;
+      best = hex;
+    }
+  }
+  return best;
+};
+
+// Pick the lightest palette slot — used as a safe fallback colour
+// when an accent lookup misses (e.g. for default cell colours).
+const lightestColor = (palette: string[]): string => {
+  let best = palette[0] ?? "#FFFFFF";
+  let bestLum = -1;
+  for (const hex of palette) {
+    const lum = colorLuminance(hex);
+    if (lum > bestLum) {
+      bestLum = lum;
+      best = hex;
+    }
+  }
+  return best;
+};
+
 export type ShapeFamily =
   | "pixel_plus"
   | "color_dial"
@@ -63,8 +106,6 @@ export type ShapeFamily =
   | "corner_arcs"
   | "scanline_ribbon"
   | "ripple_arcs"
-  | "spiral_bloom"
-  | "folded_z"
   | "polar_swirl"
   ;
 
@@ -336,24 +377,28 @@ export const buildThinSpokes: ShapeBuilder = (seed, size, palette) => {
     const y1 = cy * innerR;
     const x2 = cx * (innerR + len);
     const y2 = cy * (innerR + len);
-    const color = palette[i % palette.length] ?? "#FFFFFF";
+    const color = palette[i % palette.length] ?? lightestColor(palette);
     const endDist = Math.hypot(x2, y2);
-    // Spokes fire in a tight cascade — inner-tip first, outer-tip
-    // last — but the window is short enough to feel like a single
-    // detonation from the hub.
-    const revealOrder = Math.min(1, (endDist / r) * 0.4);
+    // Reveal cascade mirrors VORTEX_DISC_DIAGONAL: smooth grow-in
+    // staggered across ~60% of the window. Inner spokes finish first;
+    // outer ones extend last.
+    // All spokes grow simultaneously from the hub to their rim
+    // endpoint — no radial cascade. revealOrder 0 for every spoke so
+    // they extend outward together.
+    const revealOrder = 0;
     cells.push({
       kind: "line",
-      cx: (x1 + x2) / 2,
-      cy: (y1 + y2) / 2,
+      // Anchor the cell at the origin (hub) so the GSAP scale pivots
+      // there and the line grows along its length from centre to rim.
+      cx: 0,
+      cy: 0,
       x1, y1, x2, y2,
-      // Thicker stroke than the old halo — each spoke needs to read
-      // as a distinct rod, not a hair.
       strokeW: Math.max(1.4, r * 0.008),
       color,
       revealOrder,
-      revealMode: "burst",
-      revealSpeed: 1.4,
+      // Same grow-mode ease as VORTEX_DISC_DIAGONAL: power3.out, no
+      // overshoot, no travel (cx,cy + birthOrigin both at origin).
+      revealMode: "grow",
       birthOrigin: { x: 0, y: 0 },
       noSpin: true,
     });
@@ -772,12 +817,33 @@ export const buildDiagonalTaper: ShapeBuilder = (seed, size, palette) => {
         rx: 0, // sharp corners — no rounded shape
         rotation: -45,
         color,
-        revealOrder: Math.min(1, t),
+        // Push the chunks' reveal off slightly so the focal anchor
+        // (added below) lands first and reads as the funnel's origin.
+        revealOrder: Math.min(1, 0.08 + t * 0.92),
         revealMode: "burst",
         birthOrigin: { x: fx, y: fy },
       });
     }
   }
+  // Focus-point anchor — a single bold accent at the focal corner
+  // (spout end) so the eye knows where the taper converges. Uses
+  // the brightest palette slot and fires at revealOrder 0 so it
+  // lands before any chunk paints.
+  const focusSize = size * 0.052;
+  cells.push({
+    kind: "rect",
+    cx: fx,
+    cy: fy,
+    w: focusSize,
+    h: focusSize,
+    rx: 0,
+    rotation: -45,
+    color: palette[0] ?? lightestColor(palette),
+    revealOrder: 0,
+    revealMode: "burst",
+    birthOrigin: { x: fx, y: fy },
+    noSpin: true,
+  });
   return { cells, focal: { x: fx, y: fy } };
 };
 
@@ -831,8 +897,9 @@ export const buildCrownDial: ShapeBuilder = (seed, size, palette) => {
       cy: (y1 + y2) / 2,
       x1, y1, x2, y2,
       strokeW: Math.max(0.9, r * 0.0045),
-      color: palette[i % palette.length] ?? "#FFFFFF",
-      revealOrder: Math.min(1, midR / r),
+      color: palette[i % palette.length] ?? lightestColor(palette),
+      // All blades grow outward from the hub simultaneously.
+      revealOrder: 0,
       revealMode: "grow",
       birthOrigin: { x: 0, y: 0 },
       vortexSpeed,
@@ -969,19 +1036,18 @@ export const buildPerspectiveFan: ShapeBuilder = (seed, size, palette) => {
   const vpx = -r * 0.88;
   const vpy = 0;
   const N = 64;
-  const spread = Math.PI * 0.72; // ~130° fan (was 153° — too tall)
-  const baseLength = size * 0.5; // was 1.6 — bars were clipping out
+  // Wider fan + cleaner angular spacing so the lines spread more
+  // dramatically across the canvas.
+  const spread = Math.PI * 0.95; // ~170° fan — bars almost reach top/bottom
+  const baseLength = size * 0.55;
   const barH = size * 0.011;
   const rand = mulberry32(seed);
   for (let i = 0; i < N; i++) {
-    // Drop ~18% of bars so the fan has visible gaps — irregular,
-    // scattered look rather than a tidy uniform rake.
     if (rand() < 0.18) continue;
     const t = (i + 0.5) / N;
-    // Heavy angular jitter — each bar offset by up to ±half a slot
-    // so bars no longer sit on the evenly-spaced grid. Combined
-    // with the drops, this scatters the fan visibly.
-    const angleJitter = (rand() - 0.5) * (spread / N) * 4.5;
+    // Gentler jitter so bars stay close to their slot angle and the
+    // fan reads as evenly distributed rather than a random cloud.
+    const angleJitter = (rand() - 0.5) * (spread / N) * 1.4;
     const a = (t - 0.5) * spread + angleJitter;
     const dx = Math.cos(a);
     const dy = Math.sin(a);
@@ -1017,13 +1083,11 @@ export const buildPerspectiveFan: ShapeBuilder = (seed, size, palette) => {
         ` L ${x2.toFixed(2)} ${y2.toFixed(2)}` +
         ` L ${x3.toFixed(2)} ${y3.toFixed(2)}` +
         ` L ${x4.toFixed(2)} ${y4.toFixed(2)} Z`,
-      color: palette[i % palette.length] ?? "#FFFFFF",
-      // Randomised per-bar reveal order — each line shoots at its own
-      // moment over the full stagger window, so the volley feels like
-      // organic gunfire rather than a synchronised salvo. "grow" mode
-      // still gives each bar a clean ease-out to its own length with
-      // no overshoot.
-      revealOrder: seedJitter,
+      color: palette[i % palette.length] ?? lightestColor(palette),
+      // All bars grow OUTWARD from the vanishing point at the same
+      // time (each line extends left→right simultaneously) rather
+      // than the whole fan sweeping in as a wave.
+      revealOrder: 0,
       noSpin: true,
       revealMode: "grow",
       revealSpeed: 0.4,
@@ -1386,8 +1450,8 @@ export const buildChevronDots: ShapeBuilder = (seed, size, palette) => {
     // contrast bursts.
     const useDark = i % 5 === 0;
     const color = useDark
-      ? "#0E0E0E"
-      : palette[Math.floor(i / 2) % palette.length] ?? "#FFFFFF";
+      ? darkestColor(palette)
+      : palette[Math.floor(i / 2) % palette.length] ?? lightestColor(palette);
     for (let s = 0; s < STEPS; s++) {
       const stepT = s / (STEPS - 1);
       const dist = rayStart + (rayEnd - rayStart) * stepT;
@@ -1406,11 +1470,13 @@ export const buildChevronDots: ShapeBuilder = (seed, size, palette) => {
         h: side,
         rx: 0,
         color,
-        // Reveal from sun disc outward — the rays "shine out" from
-        // the centre.
-        revealOrder: Math.min(1, 0.05 + stepT * 0.95),
+        // Smooth grow-in cascade — matches VORTEX_DISC_DIAGONAL: each
+        // pip scales 0→1 in place over a 60% revealSpread window,
+        // power3.out ease (no overshoot), staticReveal (no travel).
+        revealOrder: Math.min(1, stepT * 0.6),
         revealMode: "grow",
-        birthOrigin: { x: 0, y: 0 },
+        birthOrigin: { x: px, y: py },
+        noSpin: true,
       });
     }
   }
@@ -1596,6 +1662,11 @@ export const buildPixelRhombus: ShapeBuilder = (seed, size, palette) => {
       const colIdx = (col + row * 2) % palette.length;
       const distFromCenter =
         Math.hypot(cellCX, cellCY) / Math.hypot(half, half);
+      // Spiral reveal — mix radial distance with angular position so
+      // the reveal wave rotates as it expands from the centre,
+      // tracing a spiral outward rather than a flat radial ring.
+      const angNorm = (radialA + Math.PI) / TAU; // 0..1
+      const revealOrder = Math.min(1, distFromCenter * 0.6 + angNorm * 0.4);
       cells.push({
         kind: "rect",
         cx: cellCX,
@@ -1604,9 +1675,12 @@ export const buildPixelRhombus: ShapeBuilder = (seed, size, palette) => {
         h: THICKNESS,
         rx: 0, // sharp rectangular bars — no pill ends
         rotation: vecDeg,
-        color: palette[colIdx] ?? "#FFFFFF",
-        revealOrder: distFromCenter,
-        revealMode: "fade",
+        color: palette[colIdx] ?? lightestColor(palette),
+        revealOrder,
+        // Grow from the centre so the bars stream out along the spiral.
+        revealMode: "grow",
+        birthOrigin: { x: 0, y: 0 },
+        noSpin: true,
       });
     }
   }
@@ -1700,7 +1774,7 @@ const buildBeadChainLayer = (
         rotation: bridgeAngle,
         color,
         // Radial reveal — bridges closer to the centre fire first.
-        revealOrder: Math.min(1, midDist / outerR),
+        revealOrder: 0,
         revealMode: "grow",
         birthOrigin: { x: 0, y: 0 },
       });
@@ -1720,7 +1794,7 @@ const buildBeadChainLayer = (
         h: beadSide,
         rx: 0,
         color,
-        revealOrder: Math.min(1, beadDist / outerR),
+        revealOrder: 0,
         revealMode: "grow",
         birthOrigin: { x: 0, y: 0 },
       });
@@ -1886,8 +1960,8 @@ export const buildPixelBloom: ShapeBuilder = (seed, size, palette) => {
     const sin = Math.sin(a);
     const useDark = i % 4 === 0;
     const color = useDark
-      ? "#0E0E0E"
-      : palette[i % palette.length] ?? "#FFFFFF";
+      ? darkestColor(palette)
+      : palette[i % palette.length] ?? lightestColor(palette);
     const STEPS = 14;
     // No per-ray phase — every ray's innermost particle sits at
     // the same radial step (s = 2). That puts all the small inner
@@ -2046,28 +2120,6 @@ export const buildBurstSegments: ShapeBuilder = (seed, size, palette) => {
   // No pre-shake — the explosion fires as soon as the reveal opens,
   // then ripples outward as a radial wave.
   const EXPLODE_WINDOW = 0.9;
-  // Compact core cluster at the focal — pops in instantly so the
-  // ignition point is visible at frame 0, then the spokes ripple
-  // outward from it.
-  const CORE_COUNT = 32;
-  for (let c = 0; c < CORE_COUNT; c++) {
-    const ang = rand() * TAU;
-    const rad = size * (0.005 + rand() * 0.055);
-    const cs = size * (0.015 + rand() * 0.030);
-    cells.push({
-      kind: "rect",
-      cx: focalX + Math.cos(ang) * rad,
-      cy: focalY + Math.sin(ang) * rad,
-      w: cs,
-      h: cs,
-      rx: 0,
-      color: palette[c % palette.length] ?? "#FFFFFF",
-      revealOrder: 0,
-      revealMode: "fade",
-      revealSpeed: 5,
-      birthOrigin: { x: focalX, y: focalY },
-    });
-  }
   // Cohesion-tuned sampling. Fewer spokes + tighter angular jitter
   // pull the cloud into a clearer radial silhouette; one palette
   // colour per spoke (not per segment) ties each ray together.
@@ -2172,6 +2224,20 @@ export type VortexDiscParams = {
   wrap?: string;
   // Continuous rotation in deg/sec (positive = CW). 0 = no spin.
   spinDegPerSec?: number;
+  // Per-cell reveal mode. "fade" = pop in place. "burst" = back-out
+  // scale + travel from focal. "grow" = smooth scale from anchor.
+  revealMode?: "fade" | "burst" | "grow";
+  // Stretch revealOrder across [0, revealSpread] instead of [0, 1].
+  // Useful when you want the cascade to finish before the stagger
+  // window ends. 1 = full window.
+  revealSpread?: number;
+  // When true and revealMode is burst/grow, each cell's birthOrigin
+  // is pinned to its own position so the animation only scales (no
+  // x/y travel). Cells stay put; only the staggered scale-in plays.
+  staticReveal?: boolean;
+  // Optional per-cell drop predicate. Return true to skip the cell.
+  // Used by abstract variants to chop chunks off the disc.
+  dropMask?: (cellCX: number, cellCY: number, ringIdx: number, wedgeIdx: number) => boolean;
 };
 
 const VORTEX_DISC_DEFAULTS: Required<VortexDiscParams> = {
@@ -2184,6 +2250,10 @@ const VORTEX_DISC_DEFAULTS: Required<VortexDiscParams> = {
   outerRFrac: 0.99,
   wrap: "scale(1.05 0.55) rotate(-12)",
   spinDegPerSec: 0,
+  revealMode: "fade",
+  revealSpread: 1,
+  staticReveal: false,
+  dropMask: () => false,
 };
 
 const buildVortexDiscWithParams = (
@@ -2195,7 +2265,7 @@ const buildVortexDiscWithParams = (
   const p = { ...VORTEX_DISC_DEFAULTS, ...params };
   const r = size / 2;
   const cells: Cell[] = [];
-  const inkDark = "#0E0E0E";
+  const inkDark = darkestColor(palette);
   const innerR = r * p.innerRFrac;
   const outerR = r * p.outerRFrac;
   for (let k = 0; k < p.rings; k++) {
@@ -2215,18 +2285,39 @@ const buildVortexDiscWithParams = (
       const aMid = (a0 + a1) / 2;
       const isInk = (k + i) % 2 === 0;
       const accentIdx = (k * 3 + i * 5) % palette.length;
-      const color = isInk ? inkDark : palette[accentIdx] ?? "#FFFFFF";
+      const color = isInk ? inkDark : palette[accentIdx] ?? lightestColor(palette);
+      const cellCX = Math.cos(aMid) * rMid;
+      const cellCY = Math.sin(aMid) * rMid;
+      // Optional drop — abstract variants chop chunks out of the disc.
+      if (p.dropMask(cellCX, cellCY, k, i)) continue;
       cells.push({
         kind: "wedge",
-        cx: Math.cos(aMid) * rMid,
-        cy: Math.sin(aMid) * rMid,
+        cx: cellCX,
+        cy: cellCY,
         innerR: r0,
         outerR: r1,
         startA: a0,
         endA: a1,
         color,
-        revealOrder: Math.min(1, ringT),
-        revealMode: "fade",
+        // Centre-out cascade — inner ring fires first, outer last.
+        // revealSpread squeezes the cascade into a tighter window
+        // when the variant wants a snappier reveal.
+        revealOrder: Math.min(1, ringT * p.revealSpread),
+        revealMode: p.revealMode,
+        // Reveal origin behaviour:
+        // - fade: pop in place, no birthOrigin needed.
+        // - burst/grow + staticReveal: birth at the cell's own
+        //   position so dx/dy = 0 → scale only, no translation.
+        // - burst/grow + !staticReveal: birth at focal (0,0) so the
+        //   cell flies from the centre to its final spot.
+        ...(p.revealMode === "fade"
+          ? {}
+          : {
+              birthOrigin: p.staticReveal
+                ? { x: cellCX, y: cellCY }
+                : { x: 0, y: 0 },
+              noSpin: true,
+            }),
       });
     }
   }
@@ -2256,6 +2347,24 @@ export const buildVortexDisc: ShapeBuilder = (seed, size, palette) =>
 export const buildVortexDiscDiagonal: ShapeBuilder = (seed, size, palette) =>
   buildVortexDiscWithParams(seed, size, palette, {
     wrap: "rotate(45) scale(1.05 0.32)",
+    // Smooth grow-in cascade — wedges scale 0→1 in place over the
+    // stagger window with power3.out ease (no overshoot, no travel).
+    // revealSpread spreads the cascade across most of the window so
+    // the disc fills in gradually instead of bumping in all at once.
+    revealMode: "grow",
+    revealSpread: 0.6,
+    staticReveal: true,
+    // Abstract top — drop most cells whose original cy < 0 (the
+    // upper hemisphere of the original disc, which becomes the
+    // upper portion of the rotated ellipse). Uses deterministic
+    // noise from cell position so the dropout pattern is stable.
+    dropMask: (cx, cy) => {
+      if (cy >= 0) return false;
+      const h = Math.abs(Math.sin(cx * 12.9898 + cy * 78.233) * 43758.5453);
+      const noise = h - Math.floor(h);
+      const upDepth = Math.min(1, -cy / (size / 2));
+      return noise < 0.25 + upDepth * 0.55;
+    },
   });
 
 // Dense, no swirl — even checker disc viewed straight-on.
@@ -2265,6 +2374,30 @@ export const buildVortexDiscFlat: ShapeBuilder = (seed, size, palette) =>
     wedges: 32,
     swirlTurns: 0,
     wrap: "rotate(0)",
+    // Keep the checker structure but clip each ring to a different
+    // arc sweep — full circle, semicircle, half, third — so the disc
+    // reads as nested concentric arcs instead of a solid wheel. Each
+    // arc is centred at the top (-90°).
+    dropMask: (cx, cy, k) => {
+      const sweeps = [
+        TAU, // full
+        Math.PI, // semicircle (180°)
+        TAU / 3, // third (120°)
+        Math.PI, // semicircle
+        TAU * 0.66, // ~two-thirds
+        Math.PI * 0.5, // quarter (90°)
+      ];
+      let sweep = sweeps[k % sweeps.length]!;
+      // Never let the outer rings (k ≥ 11, with rings=14) close into
+      // a full circle — the outermost band that "wraps it all" must
+      // stay an open arc.
+      if (k >= 11 && sweep >= TAU) sweep = TAU * 0.72;
+      if (sweep >= TAU) return false; // inner full ring — keep all
+      let d = Math.atan2(cy, cx) - -Math.PI / 2; // centre arc at top
+      while (d > Math.PI) d -= TAU;
+      while (d < -Math.PI) d += TAU;
+      return Math.abs(d) > sweep / 2; // drop cells outside the arc
+    },
   });
 
 // Wide-edge view spinning slowly — the disc looks like a turning coin.
@@ -2533,11 +2666,13 @@ export const buildScanlineRibbon: ShapeBuilder = (seed, size, palette) => {
 
       const dashCX = cx + pnx * offset;
       const dashCY = cy + pny * offset;
-      // Reveal anchored at the centre of the figure-8 — cells closer
-      // to the origin fire first; the cascade then ripples outward
-      // to both lobe tips simultaneously.
+      // Reveal from the centre outward — cells nearest the origin
+      // fire first; both lobes draw away from the centre in sync
+      // (right side goes rightward, left side goes leftward).
       const distFromCenter = Math.hypot(dashCX, dashCY);
-      const revealOrder = Math.min(1, distFromCenter / lemR);
+      // Centre fires first, then BOTH lobes draw outward (right and
+      // left simultaneously). Tight 0.35 window so it's quick.
+      const revealOrder = Math.min(1, (distFromCenter / lemR) * 0.35);
       cells.push({
         kind: "rect",
         cx: dashCX,
@@ -2671,219 +2806,6 @@ export const buildRippleArcs: ShapeBuilder = (seed, size, palette) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────
-// 39 — SPIRAL BLOOM (wave variant)
-//
-// Repurposed as a horizontal wave field — instead of spiral arms,
-// every row of the grid is undulated by a sine wave (cellY shifted
-// by sin(cellX * freq) * amp). Cells only emit when their wave-
-// adjusted Y lands near the centre of a band, so the field reads as
-// a stack of parallel wavy lines crossing the canvas. Reveal cascades
-// from left to right so the waves "draw" across.
-// ─────────────────────────────────────────────────────────────────────
-export const buildSpiralBloom: ShapeBuilder = (seed, size, palette) => {
-  void seed;
-  const cells: Cell[] = [];
-  const COLS = 28;
-  const ROWS = 28;
-  const half = size / 2;
-  const slotW = size / COLS;
-  const slotH = size / ROWS;
-  // Wave geometry. WAVE_FREQ = how many full cycles cross the canvas
-  // horizontally; WAVE_AMP = vertical sway in canvas units; BAND_GAP
-  // = spacing between wave lines (smaller = more lines visible).
-  const WAVE_FREQ = 2.4;
-  const WAVE_AMP = size * 0.085;
-  const BAND_GAP = size * 0.13;
-  // Thickness of each wave band as a fraction of BAND_GAP. Below 0.5
-  // means each wave reads as a discrete line with empty space above
-  // and below.
-  const BAND_FILL = 0.42;
-  const colorA = palette[0] ?? "#FFFFFF";
-
-  for (let row = 0; row < ROWS; row++) {
-    for (let col = 0; col < COLS; col++) {
-      const cellCX = -half + (col + 0.5) * slotW;
-      const cellCY = -half + (row + 0.5) * slotH;
-      // Apply the horizontal sine displacement to Y so each band
-      // bows up and down across the canvas.
-      const yShift = Math.sin((cellCX / size) * Math.PI * 2 * WAVE_FREQ) * WAVE_AMP;
-      const adjY = cellCY - yShift;
-      // Bucket the adjusted Y into bands. Cells whose band-position
-      // is near the centre of a band emit; the rest is empty.
-      const bandPos = adjY / BAND_GAP;
-      const bandIdx = Math.floor(bandPos);
-      const bandFrac = bandPos - bandIdx;
-      if (Math.abs(bandFrac - 0.5) > BAND_FILL / 2) continue;
-      // Palette cycles per band so all team colours show across the
-      // stack of waves.
-      const colorIdx =
-        ((bandIdx % palette.length) + palette.length) % palette.length;
-      const color = palette[colorIdx] ?? colorA;
-      // Reveal cascades left → right so the waves "draw" across.
-      const revealOrder = (cellCX + half) / size;
-
-      cells.push({
-        kind: "rect",
-        cx: cellCX,
-        cy: cellCY,
-        w: slotW * 0.8,
-        h: slotH * 0.8,
-        rx: 0,
-        color,
-        revealOrder,
-        revealMode: "fade",
-      });
-    }
-  }
-  return {
-    cells,
-    focal: { x: 0, y: 0 },
-  };
-};
-
-// ─────────────────────────────────────────────────────────────────────
-// 40 — FOLDED Z
-//
-// Constructivist mark — three rectangular bars assembled into a Z /
-// folded-ribbon silhouette. Top and bottom bars are short slabs
-// offset along the diagonal axis (top left-of-centre, bottom right-
-// of-centre); a 45°-rotated middle bar bridges them. The shape is
-// drawn from pure rectangles and a single diagonal — no curves, no
-// gradients — and reads instantly as a directional motion symbol,
-// impossible-shape mark, or folded-paper geometry.
-//
-// Reveal: each bar births from a position outside its final slot
-// (top bar from above the canvas, bottom bar from below, diagonal
-// from the origin) and tweens in via back-out burst. Sequenced by
-// revealOrder so the silhouette assembles top → diagonal → bottom.
-// ─────────────────────────────────────────────────────────────────────
-export const buildFoldedZ: ShapeBuilder = (seed, size, palette) => {
-  void seed;
-  const cells: Cell[] = [];
-  const h = size / 2;
-  // Each rect picks a different palette slot so the mark fans through
-  // every team colour rather than monochrome.
-  const C = (i: number) => palette[i % palette.length] ?? "#FFFFFF";
-  const barThick = h * 0.22;
-  const offset = h * 0.14;
-  const barLen = h * 0.95;
-  const diagLen = h * 1.32;
-
-  // Top bar — palette[0].
-  cells.push({
-    kind: "rect",
-    cx: -offset,
-    cy: -h * 0.6,
-    w: barLen,
-    h: barThick,
-    rx: 0,
-    color: C(0),
-    revealOrder: 0,
-    revealMode: "burst",
-    birthOrigin: { x: -offset, y: -h * 1.5 },
-    noSpin: true,
-  });
-
-  // Diagonal — palette[1].
-  cells.push({
-    kind: "rect",
-    cx: 0,
-    cy: 0,
-    w: diagLen,
-    h: barThick,
-    rx: 0,
-    rotation: -45,
-    color: C(1),
-    revealOrder: 0.32,
-    revealMode: "burst",
-    birthOrigin: { x: 0, y: 0 },
-    noSpin: true,
-  });
-
-  // Bottom bar — palette[2].
-  cells.push({
-    kind: "rect",
-    cx: offset,
-    cy: h * 0.6,
-    w: barLen,
-    h: barThick,
-    rx: 0,
-    color: C(2),
-    revealOrder: 0.62,
-    revealMode: "burst",
-    birthOrigin: { x: offset, y: h * 1.5 },
-    noSpin: true,
-  });
-
-  // ── Accent pieces — palette[3], palette[4], palette[0], palette[1]
-  // — cycle continues so every palette slot appears across the mark.
-
-  // Stub — palette[3].
-  cells.push({
-    kind: "rect",
-    cx: -offset - barLen * 0.4,
-    cy: -h * 0.58,
-    w: barThick * 1.2,
-    h: barThick * 2.1,
-    rx: 0,
-    color: C(3),
-    revealOrder: 0.78,
-    revealMode: "burst",
-    birthOrigin: { x: -h * 1.4, y: -h * 0.58 },
-    noSpin: true,
-  });
-
-  // Counter-diagonal — palette[4].
-  cells.push({
-    kind: "rect",
-    cx: -h * 0.18,
-    cy: h * 0.22,
-    w: h * 0.46,
-    h: barThick * 0.42,
-    rx: 0,
-    rotation: 45,
-    color: C(4),
-    revealOrder: 0.82,
-    revealMode: "burst",
-    birthOrigin: { x: -h * 0.5, y: h * 0.6 },
-    noSpin: true,
-  });
-
-  // Pip — palette[0] (cycle wraps).
-  cells.push({
-    kind: "rect",
-    cx: offset + barLen * 0.42,
-    cy: h * 0.62,
-    w: barThick * 1.05,
-    h: barThick * 1.05,
-    rx: 0,
-    color: C(5),
-    revealOrder: 0.92,
-    revealMode: "burst",
-    birthOrigin: { x: h * 1.5, y: h * 0.62 },
-    noSpin: true,
-  });
-
-  // Mid-stem tab — palette[1] (wraps).
-  cells.push({
-    kind: "rect",
-    cx: h * 0.16,
-    cy: -h * 0.16,
-    w: h * 0.22,
-    h: barThick * 0.55,
-    rx: 0,
-    rotation: -45,
-    color: C(6),
-    revealOrder: 0.5,
-    revealMode: "burst",
-    birthOrigin: { x: 0, y: 0 },
-    noSpin: true,
-  });
-
-  return { cells, focal: { x: 0, y: 0 } };
-};
-
-// ─────────────────────────────────────────────────────────────────────
 // 41 — POLAR SWIRL
 //
 // Polar checker grid with a progressive inward swirl — modelled on
@@ -2895,17 +2817,19 @@ export const buildFoldedZ: ShapeBuilder = (seed, size, palette) => {
 // slot gets used because the accent index cycles per cell.
 // ─────────────────────────────────────────────────────────────────────
 export const buildPolarSwirl: ShapeBuilder = (seed, size, palette) => {
-  void seed;
+  const rand = mulberry32(seed);
   const r = size / 2;
   const cells: Cell[] = [];
   const RINGS = 14;
   const WEDGES = 32;
   const innerR = r * 0.035;
   const outerR = r * 0.99;
-  const inkDark = "#0E0E0E";
-  // Total swirl winding at the centre — outer rim has no twist,
-  // inner rings progressively accumulate it.
+  const inkDark = darkestColor(palette);
   const SWIRL = TAU * 0.9;
+  // Base hole probability — a big chunk of wedges are dropped so the
+  // disc reads as scattered fragments rather than a solid checker.
+  // Drops climb toward the rim so the silhouette dissolves outward.
+  const BASE_DROP = 0.42;
 
   for (let k = 0; k < RINGS; k++) {
     const tIn = k / RINGS;
@@ -2914,18 +2838,20 @@ export const buildPolarSwirl: ShapeBuilder = (seed, size, palette) => {
     const r1 = innerR + (outerR - innerR) * tOut;
     const rMid = (r0 + r1) / 2;
     const ringT = k / Math.max(1, RINGS - 1);
-    // Inverse-radius twist — inner rings get the full SWIRL, outer
-    // ring gets none. Pow-curve sharpens the swirl at the eye.
     const twist = SWIRL * Math.pow(1 - ringT, 1.6);
+    // Drop probability rises with radius — centre stays denser, the
+    // outer rings get punched full of holes so the disc loses its
+    // clean circular edge.
+    const dropProb = BASE_DROP + ringT * 0.4;
     for (let i = 0; i < WEDGES; i++) {
+      // Random hole — skip this wedge entirely.
+      if (rand() < dropProb) continue;
       const a0 = (i / WEDGES) * TAU + twist;
       const a1 = ((i + 1) / WEDGES) * TAU + twist;
       const aMid = (a0 + a1) / 2;
       const isInk = (k + i) % 2 === 0;
-      // Accent slot cycles via i and k so every team palette slot
-      // is sampled across the disc.
       const accentIdx = (k * 3 + i * 5) % palette.length;
-      const color = isInk ? inkDark : palette[accentIdx] ?? "#FFFFFF";
+      const color = isInk ? inkDark : palette[accentIdx] ?? lightestColor(palette);
       cells.push({
         kind: "wedge",
         cx: Math.cos(aMid) * rMid,
@@ -2943,8 +2869,6 @@ export const buildPolarSwirl: ShapeBuilder = (seed, size, palette) => {
   return {
     cells,
     focal: { x: 0, y: 0 },
-    // Slow continuous rotation, 4°/s = 90s revolution. Enough to read
-    // as kinetic without distracting from the swirl geometry.
     wrapAnimation: (localFrame) => `rotate(${(localFrame / 30) * 4})`,
   };
 };
@@ -2979,8 +2903,6 @@ export const SHAPE_BUILDERS: Record<ShapeFamily, ShapeBuilder> = {
   corner_arcs: buildCornerArcs,
   scanline_ribbon: buildScanlineRibbon,
   ripple_arcs: buildRippleArcs,
-  spiral_bloom: buildSpiralBloom,
-  folded_z: buildFoldedZ,
   polar_swirl: buildPolarSwirl,
 };
 
@@ -3011,10 +2933,46 @@ export const SHAPE_FAMILIES: ShapeFamily[] = [
   "corner_arcs",
   "scanline_ribbon",
   "ripple_arcs",
-  "spiral_bloom",
-  "folded_z",
   "polar_swirl",
 ];
+
+// ─────────────────────────────────────────────────────────────────────
+// Per-render variation — applied on top of any built shape so the
+// SAME family renders differently from match to match (and goal to
+// goal). Two deterministic-from-seed axes:
+//   1. Particle amount — drop a fraction of cells so each render has
+//      a different density (fewer / more inner shapes).
+//   2. Rotation amount — a continuous spin rate (deg/sec, CW or CCW,
+//      sometimes zero) the caller applies to the shape group as a
+//      function of the current frame.
+// Camera tilt/squash intentionally removed — shapes keep their own
+// composition; only their density + spin vary.
+// ─────────────────────────────────────────────────────────────────────
+export type ShapeVariation = {
+  cells: Cell[];
+  // Continuous rotation rate in degrees/second. The caller multiplies
+  // this by (localFrame / 30) to get the current rotation angle.
+  spinDegPerSec: number;
+};
+
+export const applyShapeVariation = (
+  built: { cells: Cell[]; focal: { x: number; y: number } },
+  variationSeed: number,
+): ShapeVariation => {
+  const rand = mulberry32(variationSeed >>> 0);
+  // Particle amount — drop 0–40% of cells uniformly so the shape's
+  // density differs between renders.
+  const cutAmount = rand() * 0.4;
+  const cells = built.cells.filter(() => rand() > cutAmount);
+
+  // Rotation amount — random continuous spin. ~30% of renders stay
+  // still (rate near 0); the rest spin slowly in either direction.
+  const spinRoll = rand();
+  const spinDegPerSec =
+    spinRoll < 0.3 ? 0 : (rand() - 0.5) * 24; // ±12°/s
+
+  return { cells, spinDegPerSec };
+};
 
 // ─────────────────────────────────────────────────────────────────────
 // ShapeRenderer — mirrors the StaticPreview eruption animation: every
@@ -3134,6 +3092,12 @@ export const ShapeRenderer: React.FC<{
   // Incrementing this prop re-triggers the per-cell stagger
   // timeline. ShapeCard bumps it on every replay click.
   playToken?: number;
+  // When false, the per-cell reveal does NOT auto-fire on mount —
+  // cells render at their final state and only animate once playToken
+  // is bumped (e.g. a click). Lets a grid of cards stay static until
+  // the user interacts, saving the cost of every card animating on
+  // page load. Defaults to true (original behaviour).
+  autoPlay?: boolean;
   // Optional overrides for the playground / live-editor surface.
   revealOverrides?: RevealOverrides;
   // Subtle post-reveal breathing scale. OFF by default — the
@@ -3141,7 +3105,7 @@ export const ShapeRenderer: React.FC<{
   // Game-card surfaces (StaticPreviewV3, gallery-v2, match-focus-v3)
   // opt in so each goal feels alive once it's landed.
   breathing?: boolean;
-}> = ({ cells, focal, localFrame, wrapAnimation, playToken = 0, revealOverrides, breathing = false }) => {
+}> = ({ cells, focal, localFrame, wrapAnimation, playToken = 0, revealOverrides, breathing = false, autoPlay = true }) => {
   const wrapT = wrapAnimation ? wrapAnimation(localFrame) : "";
   // One ref per cell — outer = vortex wrapper (rotates around shape
   // origin), inner = reveal wrapper (scales / translates around the
@@ -3150,6 +3114,9 @@ export const ShapeRenderer: React.FC<{
   const revealRefs = useRef<Array<SVGGElement | null>>([]);
 
   useEffect(() => {
+    // Skip the auto-reveal on mount when autoPlay is off — cells stay
+    // at their natural final state until playToken is bumped.
+    if (!autoPlay && playToken === 0) return;
     const tweens: gsap.core.Tween[] = [];
     const overrideStagger = revealOverrides?.staggerSec;
     const overrideDuration = revealOverrides?.cellDurationSec;
