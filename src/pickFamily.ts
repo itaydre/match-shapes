@@ -43,8 +43,22 @@ export const familiesForGame = (matchId: string): ShapeFamily[] => {
 // Coarse "family group" — keeps two visually-similar shapes (two
 // vortex-disc variants, two mandalas, …) off consecutive goals.
 export const familyGroup = (f: ShapeFamily): string => {
-  if (f.startsWith("vortex_disc")) return "vortex";
-  if (f.includes("mandala")) return "mandala";
+  // lens_mandala is the cyclone spiral — visually distinct, its own
+  // group, fine to show next to a radial shape.
+  if (f === "lens_mandala") return "lens";
+  // All radial swirl / wheel / mandala shapes read alike → one group
+  // so two never land on consecutive goals.
+  if (
+    f.startsWith("vortex_disc") ||
+    f === "polar_vortex" ||
+    f === "polar_swirl" ||
+    f === "interference_mandala" ||
+    f === "shatter_mandala" ||
+    f === "mandala_curves" ||
+    f === "crown_dial"
+  ) {
+    return "radial";
+  }
   if (f.includes("ribbon")) return "ribbon";
   if (f.includes("arcs")) return "arcs";
   if (f.includes("burst")) return "burst";
