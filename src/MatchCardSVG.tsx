@@ -523,7 +523,7 @@ export const StaticPreviewV3: React.FC<StaticPreviewV3Props> = ({
                 fill={numeralColor(home)}
                 style={{
                   fontVariantNumeric: "tabular-nums",
-                  fontVariationSettings: '"wdth" 8.4, "wght" 666',
+                  fontVariationSettings: '"wdth" 8.4, "wght" 500',
                 }}
               >
                 {homeFired}
@@ -542,7 +542,7 @@ export const StaticPreviewV3: React.FC<StaticPreviewV3Props> = ({
                 fill={numeralColor(away)}
                 style={{
                   fontVariantNumeric: "tabular-nums",
-                  fontVariationSettings: '"wdth" 8.4, "wght" 666',
+                  fontVariationSettings: '"wdth" 8.4, "wght" 500',
                 }}
               >
                 {awayFired}

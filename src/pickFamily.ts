@@ -55,7 +55,20 @@ export const familyGroup = (f: ShapeFamily): string => {
     f === "interference_mandala" ||
     f === "shatter_mandala" ||
     f === "mandala_curves" ||
-    f === "crown_dial"
+    f === "crown_dial" ||
+    f === "basket_vortex" ||
+    f === "radial_checker" ||
+    f === "swirl_checker" ||
+    f === "shard_vortex" ||
+    f === "collapsed_quadrant" ||
+    f === "checker_spiral" ||
+    f === "checker_tunnel" ||
+    f === "ring_spiral" ||
+    f === "pixel_swirl" ||
+    f === "solar_flare" ||
+    f === "tactical_scan" ||
+    f === "spiral_tunnel" ||
+    f === "chip_storm"
   ) {
     return "radial";
   }
@@ -63,6 +76,7 @@ export const familyGroup = (f: ShapeFamily): string => {
   if (f.includes("arcs")) return "arcs";
   if (f.includes("burst")) return "burst";
   if (f.includes("pixel")) return "pixel";
+  if (f.startsWith("sphere")) return "sphere";
   return f;
 };
 
@@ -91,14 +105,18 @@ export const buildMatchShapeMap = (
     for (let scan = 0; scan < shuffled.length; scan++) {
       const cand = shuffled[(cursor + scan) % shuffled.length]!;
       if (used.has(cand)) continue;
-      const remaining = shuffled.length - used.size;
-      if (familyGroup(cand) === prevGroup && remaining > 1) continue;
+      // Never put two consecutive goals in the same category.
+      if (familyGroup(cand) === prevGroup) continue;
       pick = cand;
       cursor = (cursor + scan + 1) % shuffled.length;
       break;
     }
     if (!pick) {
+      // Every unused family shares the previous goal's category. Keep the
+      // category different anyway by reusing a family from another
+      // category; only repeat a category as an absolute last resort.
       pick =
+        shuffled.find((f) => familyGroup(f) !== prevGroup) ??
         shuffled.find((f) => !used.has(f)) ??
         shuffled[cursor % shuffled.length]!;
       cursor = (cursor + 1) % shuffled.length;
