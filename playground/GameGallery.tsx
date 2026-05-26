@@ -1725,16 +1725,12 @@ const paletteOf = (t: StaticPreviewTeam): string[] => {
 // once through to frame 269, freezes there. Clicking again resets
 // to frame 0 and replays from the start. No automatic looping.
 //
-// Audio: each card owns one looping crowd track and triggers a goal
-// shout per goal + a final whistle at match end. Triggers fire
-// exactly once per playthrough; "Replay" clears them.
+// Audio: each card owns one looping crowd track + a final whistle at
+// match end. Triggers fire once per playthrough; "Replay" clears them.
 const TOTAL_FRAMES = 270;
 const END_FRAME = TOTAL_FRAMES - 1;
 const KICKOFF_END = 15;
 const MATCH_END = 180; // Match clock ends earlier than video so late-game goals still have room for their reveal animation.
-const minuteToTriggerFrame = (m: number) =>
-  KICKOFF_END +
-  Math.max(0, Math.min(1, m / 90)) * (MATCH_END - KICKOFF_END);
 
 export const GalleryCard: React.FC<{ game: Game }> = ({ game }) => {
   const [frame, setFrame] = useState(0);
@@ -1768,53 +1764,10 @@ export const GalleryCard: React.FC<{ game: Game }> = ({ game }) => {
       c.pause();
     }
   }, [playing]);
-  // Trigger goal shouts + final whistle on the way through the frame.
+  // Final whistle on the way through the frame. (Goal-shout / "yell"
+  // audio has been removed from the project.)
   useEffect(() => {
     if (!playing) return;
-    for (const g of game.goals) {
-      if (goalsFiredRef.current.has(g.id)) continue;
-      if (frame >= minuteToTriggerFrame(g.minute)) {
-        // Pick the scoring team's commentator yell (br/es/fr/...).
-        const scorerTeam = g.team === "home" ? game.home : game.away;
-        const lang = scorerTeam.goalLang ?? "en";
-        // Per-lang audio path overrides — when a lang appears here,
-        // use the listed file instead of the default goal-<lang>.mp3.
-        const GOAL_AUDIO_PATHS: Record<string, string> = {
-          br: "/audio/goal-br.wav",
-          ko: "/audio/goal-ko.wav",
-          jp: "/audio/goal-jp.wav",
-          fa: "/audio/goal-fa.wav",
-          "es-ar": "/audio/goal-es-ar.wav",
-          // New commentator tracks (May 2026 batch)
-          "ar-sa": "/audio/goal-ar-sa.wav",
-          hr: "/audio/goal-hr.wav",
-          nl: "/audio/goal-nl.wav",
-          pt: "/audio/goal-pt.wav",
-          "nl-be": "/audio/goal-nl-be.wav",
-          "de-at": "/audio/goal-de-at.wav",
-          uz: "/audio/goal-uz.wav",
-          // Ecstatic batch
-          en: "/audio/goal-en.wav",
-          "ar-eg": "/audio/goal-ar-eg.wav",
-          "ar-iq": "/audio/goal-ar-iq.wav",
-          "ar-jo": "/audio/goal-ar-jo.wav",
-          "ar-qa": "/audio/goal-ar-qa.wav",
-          "ar-ma": "/audio/goal-ar-ma.wav",
-          "en-ca": "/audio/goal-en-ca.wav",
-          "en-jm": "/audio/goal-en-jm.wav",
-          "en-sct": "/audio/goal-en-sct.wav",
-          "ar-dz": "/audio/goal-ar-dz.wav",
-        };
-        const audioPath =
-          GOAL_AUDIO_PATHS[lang] ?? `/audio/goal-${lang}.mp3`;
-        const a = new Audio(audioPath);
-        // Goals muted for now (per user). Crowd + whistle still play.
-        // Bump volume back up when re-enabling.
-        a.volume = 0;
-        a.play().catch(() => {});
-        goalsFiredRef.current.add(g.id);
-      }
-    }
     if (!whistleFiredRef.current && frame >= MATCH_END) {
       const a = new Audio("/audio/whistle.mp3");
       a.volume = 0; // muted for v1 gallery
