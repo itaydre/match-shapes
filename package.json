@@ -1,0 +1,47 @@
+{
+  "name": "match-card",
+  "version": "1.0.0",
+  "private": true,
+  "description": "9-second animated final-card video for World Cup match results",
+  "scripts": {
+    "dev": "remotion studio",
+    "render": "remotion render MatchCard out/match-card.mp4",
+    "render:still": "remotion still MatchCard out/match-card-final.png --frame=269",
+    "upgrade": "remotion upgrade",
+    "playground": "vite",
+    "playground:build": "vite build",
+    "lab": "vite --config vite.lab.config.ts",
+    "lab:build": "vite build --config vite.lab.config.ts",
+    "check:colors": "esbuild scripts/check-colors.ts --bundle --platform=node --format=esm --outfile=/tmp/check-colors.mjs --jsx=automatic --loader:.mp3=empty --loader:.wav=empty && node /tmp/check-colors.mjs",
+    "p5lab": "vite --config vite.p5.config.ts",
+    "p5lab:build": "vite build --config vite.p5.config.ts"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.412",
+    "@remotion/google-fonts": "4.0.412",
+    "@remotion/player": "4.0.412",
+    "@remotion/zod-types": "4.0.412",
+    "@theatre/core": "^0.7.2",
+    "@theatre/studio": "^0.7.2",
+    "@types/p5": "^1.7.7",
+    "d3-shape": "^3.2.0",
+    "gsap": "^3.15.0",
+    "mp4-muxer": "^5.2.2",
+    "p5": "^2.2.3",
+    "react": "19.0.0",
+    "react-dom": "19.0.0",
+    "remotion": "4.0.412",
+    "stripes-maker": "^1.0.2",
+    "zdog": "^1.1.3",
+    "zod": "3.22.3"
+  },
+  "devDependencies": {
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "@types/web": "0.0.166",
+    "@vitejs/plugin-react": "4.3.1",
+    "puppeteer-core": "^23.11.1",
+    "typescript": "5.5.4",
+    "vite": "5.4.10"
+  }
+}
