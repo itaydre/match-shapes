@@ -8,12 +8,17 @@
     "lab:build": "vite build --config vite.lab.config.ts",
     "poster": "node scripts/render-poster.mjs",
     "still": "node scripts/render-still.mjs",
-    "render:mp4": "node scripts/render-match.mjs"
+    "render:mp4": "node scripts/render-match.mjs",
+    "video": "remotion studio",
+    "video:render": "remotion render MatchVideo out/video/MatchVideo.mp4"
   },
   "dependencies": {
+    "@remotion/cli": "^4.0.467",
+    "@remotion/google-fonts": "^4.0.467",
     "gsap": "^3.15.0",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "remotion": "^4.0.467"
   },
   "devDependencies": {
     "@types/react": "19.0.0",

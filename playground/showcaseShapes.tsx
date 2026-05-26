@@ -5052,19 +5052,38 @@ export const ShapeRenderer: React.FC<{
   // When set, near-white cells repaint to a pure white fill + hairline
   // border; coloured cells keep their team colour. Off = render as built.
   whiteCells?: WhiteCellStyle;
-}> = ({ cells, focal, localFrame, wrapAnimation, playToken = 0, revealOverrides, breathing = false, autoPlay = true, whiteCells }) => {
+  // Deterministic render bridge. When set (in SECONDS), the reveal
+  // master timeline is SEEKED to this time instead of playing in real
+  // time — so a Node/headless renderer can step frames exactly (no rAF,
+  // no wall-clock drift). Undefined on the live surfaces, which play
+  // normally. Pair with localFrame = seekTime * fps for the (already
+  // frame-pure) breathing + wrapAnimation transforms.
+  seekTime?: number;
+}> = ({ cells, focal, localFrame, wrapAnimation, playToken = 0, revealOverrides, breathing = false, autoPlay = true, whiteCells, seekTime }) => {
   const wrapT = wrapAnimation ? wrapAnimation(localFrame) : "";
   // One ref per cell — outer = vortex wrapper (rotates around shape
   // origin), inner = reveal wrapper (scales / translates around the
   // cell's own centre). Both can run independent GSAP tweens.
   const vortexRefs = useRef<Array<SVGGElement | null>>([]);
   const revealRefs = useRef<Array<SVGGElement | null>>([]);
+  // The single paused master timeline for this shape's whole reveal.
+  // Built once per playToken/mode; played live or seeked deterministically.
+  const masterRef = useRef<gsap.core.Timeline | null>(null);
+  // Deterministic (server-render / scrub) mode vs live real-time play.
+  const deterministic = seekTime !== undefined;
 
   useRevealLayoutEffect(() => {
-    // Skip the auto-reveal on mount when autoPlay is off — cells stay
-    // at their natural final state until playToken is bumped.
-    if (!autoPlay && playToken === 0) return;
-    const tweens: gsap.core.Tween[] = [];
+    // Live surfaces skip the reveal on mount when autoPlay is off (cells
+    // stay at their final state until playToken bumps). The deterministic
+    // (server-render / scrub) path ALWAYS builds the timeline so it can
+    // be seeked to any frame.
+    if (!deterministic && !autoPlay && playToken === 0) return;
+    // One PAUSED master timeline holds every per-cell reveal + ripple +
+    // vortex tween at an absolute position (the cell's stagger delay).
+    // Live → play() it (identical real-time behaviour). Deterministic →
+    // seek() it per frame so a Node renderer steps time exactly.
+    const master = gsap.timeline({ paused: true });
+    masterRef.current = master;
     const overrideStagger = revealOverrides?.staggerSec;
     const overrideDuration = revealOverrides?.cellDurationSec;
     const overrideEase = revealOverrides?.ease;
@@ -5148,7 +5167,10 @@ export const ShapeRenderer: React.FC<{
       gsap.set(revealEl, {
         svgOrigin: `${cell.cx} ${cell.cy}`,
       });
-      const tween = gsap.fromTo(
+      // Position on the master = the cell's stagger delay (absolute),
+      // replacing the per-tween `delay` so the whole reveal is one
+      // seekable sequence.
+      master.fromTo(
         revealEl,
         {
           x: travelFromX,
@@ -5162,11 +5184,10 @@ export const ShapeRenderer: React.FC<{
           scale: 1,
           rotation: 0,
           duration: perCellSec,
-          delay: delaySec,
           ease,
         },
+        delaySec,
       );
-      tweens.push(tween);
       // Ripple — continuous scale yoyo around the cell's own
       // centre. Cell's ripplePhase shifts when in the cycle it
       // peaks, so phase-staggered cells produce a traveling wave
@@ -5179,10 +5200,7 @@ export const ShapeRenderer: React.FC<{
         const up = period * 0.22;
         const down = period * 0.22;
         const rest = Math.max(0, period - up - down);
-        const ripple = gsap.timeline({
-          repeat: -1,
-          delay: delaySec + perCellSec + phase,
-        });
+        const ripple = gsap.timeline({ repeat: -1 });
         ripple.to(revealEl, {
           scale: 1 + amp,
           duration: up,
@@ -5194,10 +5212,9 @@ export const ShapeRenderer: React.FC<{
           ease: "sine.in",
         });
         if (rest > 0) ripple.to({}, { duration: rest });
-        // gsap.timeline doesn't return a Tween, but we still want
-        // to kill it on cleanup — push the timeline cast as Tween-
-        // compatible (kill() exists on both).
-        tweens.push(ripple as unknown as gsap.core.Tween);
+        // Nest the infinite ripple on the master at its absolute start.
+        // Seeking the master renders the ripple's looped state correctly.
+        master.add(ripple, delaySec + perCellSec + phase);
       }
       // Vortex — continuous spin around shape origin (0, 0). Kicks
       // in after the cell's reveal completes.
@@ -5210,16 +5227,32 @@ export const ShapeRenderer: React.FC<{
           duration: vortexDuration,
           ease: "none",
           repeat: -1,
-          delay: delaySec + perCellSec,
         });
-        tweens.push(vortex);
+        master.add(vortex, delaySec + perCellSec);
       }
     });
+    // Live → play in real time (unchanged behaviour). Deterministic →
+    // stay paused and jump to the requested time; the scrub effect below
+    // re-seeks on subsequent seekTime changes without rebuilding.
+    if (deterministic) {
+      master.seek(seekTime!);
+    } else {
+      master.play();
+    }
     return () => {
-      tweens.forEach((t) => t.kill());
+      master.kill();
+      if (masterRef.current === master) masterRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [playToken, revealOverrides]);
+  }, [playToken, revealOverrides, deterministic]);
+
+  // Deterministic scrub: when a seekTime is supplied (server render /
+  // scrub tools), jump the already-built master timeline to it WITHOUT
+  // rebuilding. Cheap — a pure, fully deterministic state seek.
+  useRevealLayoutEffect(() => {
+    if (seekTime === undefined) return;
+    masterRef.current?.seek(seekTime);
+  }, [seekTime]);
   // ↑ Intentionally NOT depending on cells / focal. Some callers
   // (gallery-v2, match-focus-v3) recompute the renderedGoals memo on
   // every frame tick because they pass a fresh `familyForGoal`

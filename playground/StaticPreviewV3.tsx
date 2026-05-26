@@ -152,6 +152,12 @@ export type StaticPreviewV3Props = {
   // an absolute reference). Defaults to S 0.35 / M 0.65 / L 0.9. The
   // size tuner lab drives this live; the gallery leaves it unset.
   tierSizes?: { S: number; M: number; L: number };
+  // Deterministic render mode. When true, each goal's reveal is driven
+  // by SEEKING its GSAP master timeline to localFrame/FPS instead of
+  // real-time play — making the whole card a pure function of `frame`.
+  // Required for frame-exact headless rendering (Remotion). Off (live,
+  // real-time play) by default.
+  deterministic?: boolean;
 };
 
 const minuteToFrame = (
@@ -354,6 +360,7 @@ export const StaticPreviewV3: React.FC<StaticPreviewV3Props> = ({
   tierSizes,
   underdog,
   showSizeBadge = false,
+  deterministic = false,
 }) => {
   // Merge layout overrides over the defaults, then derive the field
   // geometry from them (shadowing what used to be module constants).
@@ -772,6 +779,11 @@ export const StaticPreviewV3: React.FC<StaticPreviewV3Props> = ({
                 // playToken keyed on goal-id + trigger frame so each
                 // goal's GSAP timeline fires exactly once on mount.
                 playToken={Math.floor(triggerFrame)}
+                // Deterministic render: seek the reveal master to this
+                // goal's local time instead of real-time play, so the
+                // frame is reproducible headlessly (Remotion). 30fps to
+                // match the timing constants in showcaseShapes.
+                seekTime={deterministic ? localFrame / 30 : undefined}
                 // Every goal uses the same reveal — the classic bouncy
                 // burst (ANIM_STYLES[0]). (The full pool is kept for the
                 // anim-styles lab; swap the index to vary again.)
